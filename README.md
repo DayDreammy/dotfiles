@@ -13,7 +13,6 @@ My personal configuration files for Zsh, Git, and other tools, managed via symli
 1.  **Clone the repository:**
 
     ```bash
-    # !!! Replace with your own repo URL !!!
     git clone  https://github.com/DayDreammy/dotfiles ~/dotfiles
     ```
 
