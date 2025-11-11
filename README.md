@@ -14,7 +14,7 @@ My personal configuration files for Zsh, Git, and other tools, managed via symli
 
     ```bash
     # !!! Replace with your own repo URL !!!
-    git clone [https://github.com/](https://github.com/)[YourUsername]/dotfiles.git ~/dotfiles
+    git clone  https://github.com/DayDreammy/dotfiles ~/dotfiles
     ```
 
 2.  **(Optional) Install Zsh Plugins:**
