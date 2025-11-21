@@ -4,7 +4,9 @@
 # Automatically creates symbolic links from this repository to your home directory
 # with proper backup handling and error checking
 
-set -euo pipefail  # Exit on error, undefined vars, pipe failures
+# More robust error handling - exit on errors but handle undefined vars gracefully
+set -eo pipefail
+shopt -s inherit_errexit 2>/dev/null || true  # Available in Bash 4.4+
 
 # --- Configuration and Variables ---
 
@@ -16,26 +18,64 @@ readonly BLUE='\033[0;34m'
 readonly NC='\033[0m' # No Color
 
 # Repository directory (automatically detected)
-readonly DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly HOME_DIR="${HOME:-$(eval echo ~$USER)}"
-readonly TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+DOTFILES_DIR=""
+DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || {
+    echo "[ERROR] Failed to determine dotfiles directory" >&2
+    exit 1
+}
+readonly DOTFILES_DIR
+
+# Home directory detection with fallbacks
+HOME_DIR="${HOME:-}"
+if [[ -z "$HOME_DIR" ]]; then
+    HOME_DIR="$(eval echo ~$USER 2>/dev/null)" || {
+        echo "[ERROR] Failed to determine home directory" >&2
+        exit 1
+    }
+fi
+readonly HOME_DIR
+
+# Generate timestamp safely
+TIMESTAMP=""
+TIMESTAMP="$(date +%Y%m%d-%H%M%S 2>/dev/null)" || {
+    TIMESTAMP="$(printf '%d' "$(date +%s 2>/dev/null || echo 0)")"
+}
+readonly TIMESTAMP
+
 readonly BACKUP_DIR="${HOME_DIR}/.dotfiles-backups"
 
-# Logging function
+# Logging functions with error handling
 log() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    # Check if color codes are supported
+    if [[ -t 1 ]] && command -v tput >/dev/null 2>&1; then
+        echo -e "${BLUE}[INFO]${NC} $1"
+    else
+        echo "[INFO] $1"
+    fi
 }
 
 warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
+    if [[ -t 1 ]] && command -v tput >/dev/null 2>&1; then
+        echo -e "${YELLOW}[WARN]${NC} $1"
+    else
+        echo "[WARN] $1"
+    fi
 }
 
 error() {
-    echo -e "${RED}[ERROR]${NC} $1" >&2
+    if [[ -t 2 ]] && command -v tput >/dev/null 2>&1; then
+        echo -e "${RED}[ERROR]${NC} $1" >&2
+    else
+        echo "[ERROR] $1" >&2
+    fi
 }
 
 success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    if [[ -t 1 ]] && command -v tput >/dev/null 2>&1; then
+        echo -e "${GREEN}[SUCCESS]${NC} $1"
+    else
+        echo "[SUCCESS] $1"
+    fi
 }
 
 # --- Helper Functions ---
@@ -75,11 +115,43 @@ ensure_backup_dir() {
     fi
 }
 
-# Backup existing file or link
+# Backup existing file or link with enhanced error handling
 backup_file() {
     local file_path="$1"
-    local backup_name="$(basename "$file_path").bak-${TIMESTAMP}"
-    local backup_path="${BACKUP_DIR}/${backup_name}"
+    local backup_name=""
+    local backup_path=""
+
+    # Validate input parameter
+    if [[ -z "$file_path" ]]; then
+        error "backup_file: file_path parameter is empty"
+        return 1
+    fi
+
+    backup_name="$(basename "$file_path").bak-${TIMESTAMP}"
+    backup_path="${BACKUP_DIR}/${backup_name}"
+
+    # Check if source file exists
+    if [[ ! -e "$file_path" ]] && [[ ! -L "$file_path" ]]; then
+        warn "Source file does not exist, skipping backup: $file_path"
+        return 0
+    fi
+
+    # Ensure backup directory exists
+    if [[ ! -d "$BACKUP_DIR" ]]; then
+        if ! mkdir -p "$BACKUP_DIR"; then
+            error "Failed to create backup directory: $BACKUP_DIR"
+            return 1
+        fi
+    fi
+
+    # Check if backup already exists
+    if [[ -e "$backup_path" ]]; then
+        local counter=1
+        while [[ -e "${backup_path}.${counter}" ]]; do
+            ((counter++))
+        done
+        backup_path="${backup_path}.${counter}"
+    fi
 
     if mv "$file_path" "$backup_path"; then
         warn "Backed up existing file: $file_path -> $backup_path"
@@ -90,10 +162,18 @@ backup_file() {
     fi
 }
 
-# Create symbolic link with error handling
+# Create symbolic link with enhanced error handling
 create_link() {
     local source_path="$1"
     local target_path="$2"
+    local parent_dir=""
+    local link_target=""
+
+    # Validate input parameters
+    if [[ -z "$source_path" ]] || [[ -z "$target_path" ]]; then
+        error "create_link: source_path or target_path parameter is empty"
+        return 1
+    fi
 
     # Check if source file exists
     if [[ ! -e "$source_path" ]]; then
@@ -110,9 +190,12 @@ create_link() {
     # Handle existing target
     if [[ -e "$target_path" ]] || [[ -L "$target_path" ]]; then
         # Check if it's already the correct link
-        if [[ -L "$target_path" ]] && [[ "$(readlink "$target_path")" == "$source_path" ]]; then
-            success "Link already exists and is correct: $target_path"
-            return 0
+        if [[ -L "$target_path" ]]; then
+            link_target="$(readlink "$target_path" 2>/dev/null || echo "")"
+            if [[ "$link_target" == "$source_path" ]]; then
+                success "Link already exists and is correct: $target_path"
+                return 0
+            fi
         fi
 
         # Backup existing file/link
@@ -122,7 +205,6 @@ create_link() {
     fi
 
     # Ensure parent directory exists
-    local parent_dir
     parent_dir="$(dirname "$target_path")"
     if [[ ! -d "$parent_dir" ]]; then
         if ! mkdir -p "$parent_dir"; then
@@ -142,36 +224,63 @@ create_link() {
     fi
 }
 
-# Verify created links
+# Verify created links with enhanced error handling
 verify_links() {
     log "Verifying created links..."
     local failed_count=0
+    local total_links=0
+
+    # Check if links array is defined and not empty
+    if [[ ! -v links ]] || [[ ${#links[@]} -eq 0 ]]; then
+        warn "No links defined for verification"
+        return 0
+    fi
 
     for item in "${links[@]}"; do
+        total_links=$((total_links + 1))
+
+        # Validate item format
+        if [[ -z "$item" ]]; then
+            error "Empty link configuration found"
+            failed_count=$((failed_count + 1))
+            continue
+        fi
+
         read -r source target <<< "$item"
         local source_path="$DOTFILES_DIR/$source"
         local target_path="$HOME_DIR/$target"
+        local link_target=""
+
+        # Validate paths
+        if [[ -z "$source" ]] || [[ -z "$target" ]]; then
+            error "Invalid link format: '$item' (missing source or target)"
+            failed_count=$((failed_count + 1))
+            continue
+        fi
 
         if [[ -L "$target_path" ]]; then
-            local link_target
-            link_target="$(readlink "$target_path")"
+            link_target="$(readlink "$target_path" 2>/dev/null || echo "READ_ERROR")"
             if [[ "$link_target" == "$source_path" ]]; then
                 success "✓ $target_path -> $source_path"
             else
-                error "✗ $target_path points to wrong target: $link_target"
-                ((failed_count++))
+                if [[ "$link_target" == "READ_ERROR" ]]; then
+                    error "✗ $target_path is a broken link"
+                else
+                    error "✗ $target_path points to wrong target: $link_target"
+                fi
+                failed_count=$((failed_count + 1))
             fi
         else
             error "✗ $target_path is not a symbolic link"
-            ((failed_count++))
+            failed_count=$((failed_count + 1))
         fi
     done
 
     if [[ $failed_count -eq 0 ]]; then
-        success "All links verified successfully"
+        success "All $total_links links verified successfully"
         return 0
     else
-        error "$failed_count links failed verification"
+        error "$failed_count out of $total_links links failed verification"
         return 1
     fi
 }
@@ -180,7 +289,8 @@ verify_links() {
 
 # Files and directories to link
 # Format: "source_file_or_directory target_dotfile_or_directory"
-links=(
+# Make sure each entry has both source and target separated by space
+declare -a links=(
     "zshrc .zshrc"
     "zshenv .zshenv"
     "zsh-config .zsh-config"
@@ -205,29 +315,55 @@ main() {
     # Ensure backup directory exists
     ensure_backup_dir
 
-    # Count total operations
-    local total_links=${#links[@]}
+    # Count total operations with safety check
+    local total_links=0
+    if [[ -v links ]] && [[ ${#links[@]} -gt 0 ]]; then
+        total_links=${#links[@]}
+    fi
+
     local current_link=0
     local success_count=0
     local error_count=0
 
+    if [[ $total_links -eq 0 ]]; then
+        warn "No configuration files to process"
+        return 0
+    fi
+
     log "Processing $total_links configuration files..."
     echo
 
-    # Process each link
+    # Process each link with enhanced error handling
     for item in "${links[@]}"; do
-        ((current_link++))
+        # Safely increment current_link
+        current_link=$((current_link + 1))
+
+        # Skip empty items
+        if [[ -z "$item" ]]; then
+            warn "[$current_link/$total_links] Skipping empty configuration entry"
+            error_count=$((error_count + 1))
+            echo
+            continue
+        fi
 
         read -r source target <<< "$item"
         local source_path="$DOTFILES_DIR/$source"
         local target_path="$HOME_DIR/$target"
 
+        # Validate configuration entry
+        if [[ -z "$source" ]] || [[ -z "$target" ]]; then
+            error "[$current_link/$total_links] Invalid configuration entry: '$item'"
+            error_count=$((error_count + 1))
+            echo
+            continue
+        fi
+
         echo "[$current_link/$total_links] Processing: $target"
 
         if create_link "$source_path" "$target_path"; then
-            ((success_count++))
+            success_count=$((success_count + 1))
         else
-            ((error_count++))
+            error_count=$((error_count + 1))
         fi
 
         echo
@@ -240,7 +376,7 @@ main() {
         success "Created/updated $success_count links"
 
         if [[ $error_count -gt 0 ]]; then
-            warn "Encountered $error_count errors"
+            warn "Encountered $error_count errors during processing"
         fi
 
         # Show backup info if backups were created
@@ -257,8 +393,8 @@ main() {
 
         # Check if Zsh is available and suggest making it default
         if command_exists zsh; then
-            local current_shell
-            current_shell="$(basename "$SHELL")"
+            local current_shell=""
+            current_shell="$(basename "${SHELL:-/bin/sh}" 2>/dev/null || echo "unknown")"
             if [[ "$current_shell" != "zsh" ]]; then
                 echo
                 warn "Your current shell is $current_shell, not zsh"
@@ -270,6 +406,7 @@ main() {
             warn "Zsh is not installed. Please install it to use these configurations."
         fi
 
+        return 0
     else
         echo
         error "Installation completed with errors!"
@@ -277,7 +414,7 @@ main() {
         error "Failed to create: $error_count links"
         echo
         log "Please check the error messages above and try running the script again."
-        exit 1
+        return 1
     fi
 }
 
