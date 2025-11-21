@@ -1,1 +1,23 @@
+# DevDocs - External Working Memory System
+# These files are for project context and should not be committed
+plan.md
+context.md
+tasks.md
+
+# Temporary files
+*.tmp
+*.temp
+install_temp.sh
+
+# OS generated files
 .DS_Store
+Thumbs.db
+
+# Backup directories
+.dotfiles-backups/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
