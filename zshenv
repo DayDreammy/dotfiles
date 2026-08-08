@@ -12,36 +12,9 @@ if command -v python3 >/dev/null 2>&1; then
     alias python='python3'
 fi
 
-# Conda 环境初始化 - 检查常见的conda安装位置
-__conda_setup=""
-# 检查项目目录中的conda
-if [ -d "/home/yy/project/kotaemon/kotaemon-app/install_dir/conda" ]; then
-    CONDA_PREFIX="/home/yy/project/kotaemon/kotaemon-app/install_dir/conda"
-    export PATH="$CONDA_PREFIX/bin:$PATH"
-    __conda_setup="$($CONDA_PREFIX/bin/conda 'shell.zsh' 'hook' 2> /dev/null)"
-fi
-
-# 检查用户目录中的conda
-if [ -z "$__conda_setup" ] && [ -d "$HOME/anaconda3" ]; then
-    CONDA_PREFIX="$HOME/anaconda3"
-    export PATH="$CONDA_PREFIX/bin:$PATH"
-    __conda_setup="$($CONDA_PREFIX/bin/conda 'shell.zsh' 'hook' 2> /dev/null)"
-fi
-
-if [ -z "$__conda_setup" ] && [ -d "$HOME/miniconda3" ]; then
-    CONDA_PREFIX="$HOME/miniconda3"
-    export PATH="$CONDA_PREFIX/bin:$PATH"
-    __conda_setup="$($CONDA_PREFIX/bin/conda 'shell.zsh' 'hook' 2> /dev/null)"
-fi
-
-# 如果找到conda，则初始化
-if [ -n "$__conda_setup" ]; then
-    eval "$__conda_setup"
-else
-    if command -v conda >/dev/null 2>&1; then
-        \conda init zsh
-    fi
-fi
+# Conda belongs in ~/.zshrc for interactive shells only.
+# ~/.zshenv is loaded by every zsh process, including scripts and command
+# substitutions, so running conda hooks here can print warnings on every shell.
 
 # Go 路径 (如果存在)
 if [ -d "$HOME/go" ]; then

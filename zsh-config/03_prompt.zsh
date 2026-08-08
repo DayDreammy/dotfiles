@@ -8,7 +8,7 @@
 # "bira" - 显示用户名、主机名、路径、时间
 
 # 选择一个显示用户名的主题
-ZSH_THEME="bira"
+ZSH_THEME="powerlevel10k/powerlevel10k"
 
 # 如果你安装了 Powerlevel10k，也可以使用它（显示用户名）
 # 首先需要安装：git clone --depth=1 https://github.com/romkatv/powerlevel10k.git ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k
